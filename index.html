@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Juego ESP32</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+<div class="contenedor">
+  <h1>Juego ESP32 🚀</h1>
+  <p>
+    Nivel: <span id="nivel">1</span> |
+    Puntos: <span id="puntos">0</span>
+  </p>
+
+  <p style="font-size:13px; margin:4px 0 6px;">
+    Esplora:
+    <span id="estado-ws" style="font-weight:bold; color:#e55;">● Desconectado</span>
+  </p>
+
+  <canvas id="game" width="400" height="500"></canvas>
+</div>
+
+<script>
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+// IMÁGENES
+const imgMeteorito = new Image();
+imgMeteorito.src = "img/meteorito.png";
+
+const imgEstrella = new Image();
+imgEstrella.src = "img/estrella.png";
+
+const imgNave = new Image();
+imgNave.src = "img/nave.png";
+
+const imgFondo = new Image();
+imgFondo.src = "img/fondo.jpg";
+
+// CONFIG
+const ESP32_IP = "192.168.100.10";
+const WS_PORT  = 81;
+
+// WEBSOCKET
+let ws = null;
+let input = { x: 0, y: 0, btn: false, btn4: false };
+
+const estadoEl = document.getElementById("estado-ws");
+
+function conectarWS() {
+  ws = new WebSocket(`ws://${ESP32_IP}:${WS_PORT}`);
+
+  ws.onopen = () => {
+    estadoEl.textContent = "● Conectado";
+    estadoEl.style.color = "#4c4";
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      input.x    = data.x    ?? 0;
+      input.y    = data.y    ?? 0;
+      input.btn  = data.btn  ?? false;
+      input.btn4 = data.btn4 ?? false;
+    } catch (e) {}
+  };
+
+  ws.onclose = () => {
+    estadoEl.textContent = "● Desconectado";
+    estadoEl.style.color = "#e55";
+    setTimeout(conectarWS, 3000);
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+conectarWS();
+
+// VARIABLES
+let jugador, obstaculos, objetos, disparos;
+let nivel, velocidad, puntos;
+let gameOver = false;
+let ganaste  = false;
+
+// TECLADO
+let teclas = { izquierda: false, derecha: false };
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowLeft")  teclas.izquierda = true;
+  if (e.key === "ArrowRight") teclas.derecha   = true;
+  if (e.key === " " && !gameOver && !ganaste) disparar();
+  if (e.key === "r" && (gameOver || ganaste)) reiniciarJuego();
+});
+
+document.addEventListener("keyup", (e) => {
+  if (e.key === "ArrowLeft")  teclas.izquierda = false;
+  if (e.key === "ArrowRight") teclas.derecha   = false;
+});
+
+// REINICIAR
+function reiniciarJuego() {
+  jugador    = { x: 170, y: 420, w: 60, h: 60 };
+  obstaculos = [];
+  objetos    = [];
+  disparos   = [];
+  nivel      = 1;
+  velocidad  = 2;
+  puntos     = 0;
+  gameOver   = false;
+  ganaste    = false;
+  input      = { x: 0, y: 0, btn: false, btn4: false };
+
+  document.getElementById("nivel").innerText  = nivel;
+  document.getElementById("puntos").innerText = puntos;
+}
+
+// CREAR
+function crearObstaculo() {
+  obstaculos.push({ x: Math.random() * 340, y: 0, w: 40, h: 40 });
+}
+
+function crearObjeto() {
+  objetos.push({ x: Math.random() * 360, y: 0, w: 30, h: 30 });
+}
+
+// DISPARAR
+function disparar() {
+  disparos.push({
+    x: jugador.x + jugador.w / 2 - 3,
+    y: jugador.y,
+    w: 6,
+    h: 15
+  });
+}
+
+// COLISIÓN
+function colision(a, b) {
+  return (
+    a.x < b.x + b.w &&
+    a.x + a.w > b.x &&
+    a.y < b.y + b.h &&
+    a.y + a.h > b.y
+  );
+}
+
+// NIVEL
+function enviarNivel(n) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ cmd: "nivel", valor: n }));
+  }
+}
+
+// LOOP
+function actualizar() {
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(imgFondo, 0, 0, canvas.width, canvas.height);
+
+  // Botón 4 — reiniciar (funciona siempre, dentro o fuera del juego)
+  if (input.btn4) {
+    if (gameOver || ganaste) reiniciarJuego();
+    input.btn4 = false;
+  }
+
+  if (!gameOver && !ganaste) {
+
+    // Movimiento teclado
+    if (teclas.izquierda) jugador.x -= 5;
+    if (teclas.derecha)   jugador.x += 5;
+
+    // Movimiento Esplora
+    jugador.x += input.x * 5;
+
+    // Botón 1 — disparar
+    if (input.btn) {
+      disparar();
+      input.btn = false;
+    }
+
+    // Límites
+    if (jugador.x < 0) jugador.x = 0;
+    if (jugador.x > canvas.width - jugador.w)
+      jugador.x = canvas.width - jugador.w;
+
+    // DISPAROS
+    for (let i = disparos.length - 1; i >= 0; i--) {
+      let d = disparos[i];
+      d.y -= 8;
+      ctx.fillStyle = "red";
+      ctx.fillRect(d.x, d.y, d.w, d.h);
+      if (d.y < 0) disparos.splice(i, 1);
+    }
+
+    // METEORITOS
+    for (let i = obstaculos.length - 1; i >= 0; i--) {
+      let o = obstaculos[i];
+      o.y += velocidad;
+
+      // Salió por abajo
+      if (o.y > canvas.height) {
+        obstaculos.splice(i, 1);
+        continue;
+      }
+
+      ctx.drawImage(imgMeteorito, o.x, o.y, o.w, o.h);
+
+      // Colisión con jugador
+      if (colision(jugador, o)) {
+        gameOver   = true;
+        obstaculos = [];
+        disparos   = [];
+        break;
+      }
+
+      // Colisión con disparo
+      let destruido = false;
+      for (let j = disparos.length - 1; j >= 0; j--) {
+        if (colision(disparos[j], o)) {
+          disparos.splice(j, 1);
+          destruido = true;
+          break;
+        }
+      }
+      if (destruido) {
+        obstaculos.splice(i, 1);
+        puntos++;
+        document.getElementById("puntos").innerText = puntos;
+        if (puntos % 5 === 0 && nivel < 3) {
+          nivel++;
+          velocidad++;
+          document.getElementById("nivel").innerText = nivel;
+          enviarNivel(nivel);
+        }
+        if (puntos >= 15) ganaste = true;
+      }
+    }
+
+    // ESTRELLAS
+    if (!gameOver) {
+      for (let i = objetos.length - 1; i >= 0; i--) {
+        let obj = objetos[i];
+        obj.y += velocidad;
+
+        if (obj.y > canvas.height) {
+          objetos.splice(i, 1);
+          continue;
+        }
+
+        ctx.drawImage(imgEstrella, obj.x, obj.y, obj.w, obj.h);
+
+        if (colision(jugador, obj)) {
+          objetos.splice(i, 1);
+          puntos++;
+          document.getElementById("puntos").innerText = puntos;
+
+          if (puntos % 5 === 0 && nivel < 3) {
+            nivel++;
+            velocidad++;
+            document.getElementById("nivel").innerText = nivel;
+            enviarNivel(nivel);
+          }
+
+          if (puntos >= 15) ganaste = true;
+        }
+      }
+
+      if (Math.random() < 0.02)  crearObstaculo();
+      if (Math.random() < 0.015) crearObjeto();
+    }
+  }
+
+  // NAVE (siempre se dibuja)
+  ctx.drawImage(imgNave, jugador.x, jugador.y, jugador.w, jugador.h);
+
+  // GAME OVER
+  if (gameOver) {
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "red";
+    ctx.font = "bold 40px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("GAME OVER", canvas.width / 2, 200);
+    ctx.fillStyle = "white";
+    ctx.font = "18px Arial";
+    ctx.fillText("Presiona BTN4 o R para reiniciar", canvas.width / 2, 250);
+    ctx.textAlign = "left";
+  }
+
+  // GANASTE
+  if (ganaste) {
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "yellow";
+    ctx.font = "bold 40px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("¡GANASTE!", canvas.width / 2, 200);
+    ctx.fillStyle = "white";
+    ctx.font = "18px Arial";
+    ctx.fillText("Presiona BTN4 o R para jugar otra vez", canvas.width / 2, 250);
+    ctx.textAlign = "left";
+  }
+
+  requestAnimationFrame(actualizar);
+}
+
+// INICIO
+reiniciarJuego();
+actualizar();
+
+</script>
+
+</body>
+</html>

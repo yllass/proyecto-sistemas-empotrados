@@ -1,0 +1,24 @@
+html, body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #111;
+  color: white;
+  font-family: Arial, sans-serif;
+}
+
+.contenedor {
+  text-align: center;
+}
+
+canvas {
+  display: block;
+  margin: 20px auto;
+  border: 2px solid white;
+  background: transparent;
+}
